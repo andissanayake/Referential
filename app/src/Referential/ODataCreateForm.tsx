@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useODataCRUD } from "./useODataCRUD";
 import { useForm } from "../Builder/core/useForm";
-import { NATIVE_INPUT_CONFIG } from "../Builder/FormComponents";
+import { NATIVE_INPUT_CONFIG, NativeSelect } from "../Builder/FormComponents";
 
 interface ODataCreateFormProps {
   baseUrl: string;
@@ -24,37 +24,53 @@ export default function ODataCreateForm({
   console.log(`ODataCreateForm render for ${entityName} (${formId}) - baseUrl: ${baseUrl}`);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formConfig, setFormConfig] = useState<{ schema: any; initialValues: any }>({
-    schema: {},
-    initialValues: {},
-  });
 
-  // Use the generic OData CRUD hook - get create function and form utilities
-  const { create, generateFormSchema, loading, allMetadata } = useODataCRUD({
+  // Use the OData CRUD hook with entity name
+  const { create, formSchema, navigationOptions, loading, allMetadata } = useODataCRUD({
     baseUrl,
+    entityName,
     instanceId: formId,
   });
 
   console.log(
     `ODataCreateForm ${entityName} (${formId}) - allMetadata:`,
     !!allMetadata,
-    "formConfig:",
-    Object.keys(formConfig.schema)
+    "formSchema:",
+    Object.keys(formSchema.schema)
   );
 
-  // Generate form configuration when metadata is loaded or entity changes
-  useEffect(() => {
-    if (allMetadata) {
-      const schemaConfig = generateFormSchema(entityName);
-      setFormConfig(schemaConfig);
-    }
-  }, [entityName, allMetadata]);
+  // Use form schema directly from hook
+  const { schema, initialValues } = formSchema;
 
-  // Generate form configuration using hook utility
-  const { schema, initialValues } = formConfig;
+  // Create custom input config that includes navigation property dropdowns
+  const customInputConfig = {
+    ...NATIVE_INPUT_CONFIG,
+    components: {
+      ...NATIVE_INPUT_CONFIG.components,
+      // Override select for navigation properties
+      select: (props: any) => {
+        // Check if this is a navigation property
+        if (props.navigationProperty) {
+          const fieldName = props.name;
+          const options = navigationOptions[fieldName] || [];
 
-  // Create form instance (no validation function - rely on backend validation)
-  const [formInstance] = useForm(initialValues, schema, NATIVE_INPUT_CONFIG);
+          return (
+            <NativeSelect
+              {...props}
+              options={options}
+              // Remove navigationProperty from DOM props
+              navigationProperty={undefined}
+            />
+          );
+        }
+        // Use regular NativeSelect for non-navigation properties
+        return <NativeSelect {...props} />;
+      },
+    },
+  };
+
+  // Create form instance with custom config
+  const [formInstance] = useForm(initialValues, schema, customInputConfig);
 
   // Handle form submission
   const handleSubmit = async () => {

@@ -4,6 +4,7 @@ import { XMLParser } from "fast-xml-parser";
 
 interface ODataCRUDConfig {
   baseUrl: string;
+  entityName: string; // The entity this hook will work with
   instanceId?: string; // Unique identifier for this hook instance
 }
 
@@ -43,12 +44,16 @@ interface ODataError {
   };
 }
 
-export function useODataCRUD<T = any>({ baseUrl, instanceId }: ODataCRUDConfig) {
-  console.log(`useODataCRUD hook initialized for instance: ${instanceId}`);
+export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: ODataCRUDConfig) {
+  console.log(`useODataCRUD hook initialized for entity: ${entityName}, instance: ${instanceId}`);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allMetadata, setAllMetadata] = useState<any>(null);
+  const [formSchema, setFormSchema] = useState<{ schema: any; initialValues: any }>({ schema: {}, initialValues: {} });
+  const [navigationOptions, setNavigationOptions] = useState<
+    Record<string, Array<{ value: string | number; label: string }>>
+  >({});
 
   // GET all entities with optional OData query parameters
   const getAll = useCallback(
@@ -476,10 +481,11 @@ export function useODataCRUD<T = any>({ baseUrl, instanceId }: ODataCRUDConfig) 
     }
   }
 
-  // Initialize metadata once
+  // Initialize metadata and form schema once
   useEffect(() => {
-    const initializeMetadata = async () => {
+    const initializeForm = async () => {
       try {
+        // Fetch metadata
         const response = await fetch(`${baseUrl}/odata/$metadata`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -490,62 +496,127 @@ export function useODataCRUD<T = any>({ baseUrl, instanceId }: ODataCRUDConfig) 
           attributeNamePrefix: "",
         });
         const parsedMetadata = parser.parse(xmlText);
-        console.log(`Setting allMetadata for instance: ${instanceId}`);
+        console.log(parsedMetadata);
+        console.log(`Setting allMetadata for entity: ${entityName}, instance: ${instanceId}`);
         setAllMetadata(parsedMetadata);
+
+        // Generate form schema
+        const entityMetadata = extractEntityMetadata(parsedMetadata, entityName);
+        console.log(entityMetadata);
+        if (entityMetadata) {
+          const schema: Record<string, { type: string; props: any }> = {};
+          const initialValues: Record<string, any> = {};
+          const navOptions: Record<string, Array<{ value: string | number; label: string }>> = {};
+
+          // Handle regular properties
+          entityMetadata.properties
+            .filter((prop: any) => {
+              return (
+                !prop.name.startsWith("__") &&
+                prop.name !== "Id" &&
+                prop.name !== "id" &&
+                !prop.name.toLowerCase().includes("id")
+              );
+            })
+            .forEach((prop: any) => {
+              const fieldType = getFieldType(prop);
+              initialValues[prop.name] = getInitialValue(prop);
+
+              schema[prop.name] = {
+                type: fieldType,
+                props: {
+                  label: prop.displayName || prop.name,
+                  helpText: prop.description,
+                  placeholder: prop.placeholder || `Enter ${prop.name.toLowerCase()}`,
+                  required: !prop.nullable,
+                  ...(prop.maxLength && { maxLength: prop.maxLength }),
+                  ...(prop.type === "Edm.Decimal" || prop.type === "Edm.Double" ? { step: "0.01" } : {}),
+                  ...(fieldType === "date" && { type: "date" }),
+                },
+              };
+            });
+
+          // Handle navigation properties
+          if (entityMetadata.navigationProperties) {
+            for (const navProp of entityMetadata.navigationProperties) {
+              if (!navProp.isCollection) {
+                // Use the navigation property name directly for the API call
+                const targetEntityName = navProp.name;
+
+                // Find the corresponding foreign key field (e.g., "Category" -> "CategoryId")
+                const foreignKeyField = `${navProp.name}Id`;
+                const hasForeignKey = entityMetadata.properties.some((prop: any) => prop.name === foreignKeyField);
+
+                if (hasForeignKey) {
+                  // Use the foreign key field name for the form
+                  initialValues[foreignKeyField] = "";
+
+                  schema[foreignKeyField] = {
+                    type: "select",
+                    props: {
+                      label: navProp.name,
+                      helpText: `Select ${targetEntityName}`,
+                      placeholder: `Choose ${targetEntityName}`,
+                      required: !navProp.nullable,
+                      options: [], // Will be populated below
+                      navigationProperty: {
+                        targetEntity: targetEntityName,
+                        isCollection: navProp.isCollection,
+                        originalName: navProp.name, // Keep original name for reference
+                      },
+                    },
+                  };
+
+                  // Fetch navigation options using the navigation property name
+                  try {
+                    const navResponse = await fetch(`${baseUrl}/odata/${targetEntityName}`);
+                    if (navResponse.ok) {
+                      const navData = await navResponse.json();
+                      const entities = navData.value || navData || [];
+                      const options = entities.map((entity: any) => ({
+                        value: entity.Id || entity.id || entity.ID,
+                        label:
+                          entity.Name ||
+                          entity.name ||
+                          entity.Title ||
+                          entity.title ||
+                          `ID: ${entity.Id || entity.id || entity.ID}`,
+                      }));
+                      navOptions[foreignKeyField] = options;
+                      console.log(`Loaded ${options.length} options for ${navProp.name} (${foreignKeyField})`);
+                    }
+                  } catch (navErr) {
+                    console.error(`Error loading navigation options for ${navProp.name}:`, navErr);
+                    navOptions[foreignKeyField] = [];
+                  }
+                } else {
+                  console.warn(`No foreign key field found for navigation property ${navProp.name}`);
+                }
+              }
+            }
+          }
+
+          setFormSchema({ schema, initialValues });
+          setNavigationOptions(navOptions);
+          console.log(`Form schema generated for ${entityName}:`, Object.keys(schema));
+        }
       } catch (err) {
-        console.error("Error initializing metadata:", err);
+        console.error("Error initializing form:", err);
       }
     };
 
-    initializeMetadata();
-  }, [baseUrl, instanceId]);
+    initializeForm();
+  }, [baseUrl, entityName, instanceId]);
 
-  const generateFormSchema = useCallback(
-    (entityName: string) => {
-      try {
-        if (!allMetadata) return { schema: {}, initialValues: {} };
-
-        const entityMetadata = extractEntityMetadata(allMetadata, entityName);
-        if (!entityMetadata?.properties) return { schema: {}, initialValues: {} };
-
-        const schema: Record<string, { type: string; props: any }> = {};
-        const initialValues: Record<string, any> = {};
-
-        entityMetadata.properties
-          .filter((prop: any) => {
-            // Skip system properties and IDs
-            return (
-              !prop.name.startsWith("__") &&
-              prop.name !== "Id" &&
-              prop.name !== "id" &&
-              !prop.name.toLowerCase().includes("id")
-            );
-          })
-          .forEach((prop: any) => {
-            const fieldType = getFieldType(prop);
-            initialValues[prop.name] = getInitialValue(prop);
-
-            schema[prop.name] = {
-              type: fieldType,
-              props: {
-                label: prop.displayName || prop.name,
-                helpText: prop.description,
-                placeholder: prop.placeholder || `Enter ${prop.name.toLowerCase()}`,
-                required: !prop.nullable,
-                ...(prop.maxLength && { maxLength: prop.maxLength }),
-                ...(prop.type === "Edm.Decimal" || prop.type === "Edm.Double" ? { step: "0.01" } : {}),
-                ...(fieldType === "date" && { type: "date" }),
-              },
-            };
-          });
-
-        return { schema, initialValues };
-      } catch (error) {
-        console.error("Error generating form schema:", error);
-        return { schema: {}, initialValues: {} };
-      }
+  // Update navigation options for a specific field
+  const updateNavigationOptions = useCallback(
+    (fieldName: string, options: Array<{ value: string | number; label: string }>) => {
+      setNavigationOptions((prev) => ({
+        ...prev,
+        [fieldName]: options,
+      }));
     },
-    [allMetadata]
+    []
   );
 
   // Utility functions for form generation - based on OData metadata
@@ -617,7 +688,9 @@ export function useODataCRUD<T = any>({ baseUrl, instanceId }: ODataCRUDConfig) 
     allMetadata,
 
     // Form utilities
-    generateFormSchema,
+    formSchema,
+    navigationOptions,
+    updateNavigationOptions,
 
     // State
     loading,
