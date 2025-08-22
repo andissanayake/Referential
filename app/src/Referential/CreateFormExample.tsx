@@ -36,6 +36,22 @@ export default function CreateFormExample() {
         onError={handleError}
         onCancel={handleCancel}
       />
+
+      <ODataCreateForm
+        baseUrl="http://localhost:5134"
+        entityName="Customer"
+        onSuccess={handleSuccess}
+        onError={handleError}
+        onCancel={handleCancel}
+      />
+
+      <ODataCreateForm
+        baseUrl="http://localhost:5134"
+        entityName="Order"
+        onSuccess={handleSuccess}
+        onError={handleError}
+        onCancel={handleCancel}
+      />
     </div>
   );
 }

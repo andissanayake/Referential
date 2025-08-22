@@ -4,7 +4,6 @@ import { XMLParser } from "fast-xml-parser";
 
 interface ODataCRUDConfig {
   baseUrl: string;
-  cacheTimeout?: number; // Cache timeout in milliseconds (default: 5 minutes)
   instanceId?: string; // Unique identifier for this hook instance
 }
 
@@ -44,59 +43,12 @@ interface ODataError {
   };
 }
 
-interface MetadataCache {
-  data: EntityMetadata;
-  timestamp: number;
-  expiresAt: number;
-}
-
-// Global cache for metadata across all instances
-const metadataCache = new Map<string, MetadataCache>();
-
-// Global debounce timers for initialization (per baseUrl)
-const initMetadataTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-// Global shared metadata state (per baseUrl)
-const sharedMetadataState = new Map<string, any>();
-
-export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, instanceId }: ODataCRUDConfig) {
+export function useODataCRUD<T = any>({ baseUrl, instanceId }: ODataCRUDConfig) {
   console.log(`useODataCRUD hook initialized for instance: ${instanceId}`);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<EntityMetadata | null>(null);
-  const [allMetadata, setAllMetadata] = useState<any>(() => {
-    // Initialize with shared metadata if available
-    return sharedMetadataState.get(baseUrl) || null;
-  });
-
-  // Check if cached metadata is still valid
-  const isCacheValid = useCallback((cache: MetadataCache): boolean => {
-    return Date.now() < cache.expiresAt;
-  }, []);
-
-  // Debug logging for cache operations
-  const logCacheOperation = useCallback((operation: string, key: string, data?: any) => {
-    if (typeof window !== "undefined" && window.location.hostname === "localhost") {
-      console.log(`[OData Cache] ${operation}:`, key, data);
-    }
-  }, []);
-
-  // Clear cache for specific entity
-  const clearCache = useCallback(
-    (entityName: string) => {
-      const cacheKey = `${baseUrl}:${entityName}`;
-      logCacheOperation("CLEAR", cacheKey);
-      metadataCache.delete(cacheKey);
-    },
-    [baseUrl, logCacheOperation]
-  );
-
-  // Clear all metadata cache
-  const clearAllCache = useCallback(() => {
-    logCacheOperation("CLEAR_ALL", "all");
-    metadataCache.clear();
-  }, [logCacheOperation]);
+  const [allMetadata, setAllMetadata] = useState<any>(null);
 
   // GET all entities with optional OData query parameters
   const getAll = useCallback(
@@ -182,12 +134,10 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
 
           // Handle OData validation errors
           if (errorData.error?.details) {
-            // Extract field-specific validation errors
             const validationErrors: Record<string, string> = {};
             errorData.error.details.forEach((detail: any) => {
               if (detail.target && detail.message) {
-                // Extract field name from target (e.g., "Name" from "Name")
-                const fieldName = detail.target.replace(/^#\//, ""); // Remove OData path prefix
+                const fieldName = detail.target.replace(/^#\//, "");
                 validationErrors[fieldName] = detail.message;
               }
             });
@@ -202,7 +152,7 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
             const validationErrors: Record<string, string> = {};
             Object.entries(errorData.error.message).forEach(([fieldName, messages]) => {
               if (Array.isArray(messages) && messages.length > 0) {
-                validationErrors[fieldName] = messages[0]; // Take the first error message
+                validationErrors[fieldName] = messages[0];
               } else if (typeof messages === "string") {
                 validationErrors[fieldName] = messages;
               }
@@ -213,7 +163,6 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
             }
           }
 
-          // Handle other OData errors
           throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
         }
 
@@ -221,7 +170,6 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
         return data;
       } catch (err) {
         if (err && typeof err === "object" && "type" in err && err.type === "validation") {
-          // Re-throw validation errors to be handled by the form
           throw err;
         }
 
@@ -273,7 +221,7 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
             const validationErrors: Record<string, string> = {};
             Object.entries(errorData.error.message).forEach(([fieldName, messages]) => {
               if (Array.isArray(messages) && messages.length > 0) {
-                validationErrors[fieldName] = messages[0]; // Take the first error message
+                validationErrors[fieldName] = messages[0];
               } else if (typeof messages === "string") {
                 validationErrors[fieldName] = messages;
               }
@@ -342,7 +290,7 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
             const validationErrors: Record<string, string> = {};
             Object.entries(errorData.error.message).forEach(([fieldName, messages]) => {
               if (Array.isArray(messages) && messages.length > 0) {
-                validationErrors[fieldName] = messages[0]; // Take the first error message
+                validationErrors[fieldName] = messages[0];
               } else if (typeof messages === "string") {
                 validationErrors[fieldName] = messages;
               }
@@ -399,23 +347,9 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
     [baseUrl]
   );
 
-  // Fetch metadata for the entity with caching
+  // Fetch metadata for the entity
   const fetchMetadata = useCallback(
-    async (entityName: string, forceRefresh = false): Promise<EntityMetadata | null> => {
-      const cacheKey = `${baseUrl}:${entityName}`;
-
-      // Check cache first (unless force refresh is requested)
-      if (!forceRefresh) {
-        const cached = metadataCache.get(cacheKey);
-        logCacheOperation("CHECK", cacheKey, cached ? "HIT" : "MISS");
-        if (cached && isCacheValid(cached)) {
-          logCacheOperation("RETURN_CACHED", cacheKey, cached.data.name);
-          setMetadata(cached.data);
-          return cached.data;
-        }
-      }
-
-      logCacheOperation("FETCH", cacheKey, forceRefresh ? "FORCE_REFRESH" : "CACHE_MISS");
+    async (entityName: string): Promise<EntityMetadata | null> => {
       setLoading(true);
       setError(null);
 
@@ -443,17 +377,6 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
           throw new Error(`Entity '${entityName}' not found in metadata`);
         }
 
-        // Cache the metadata
-        const now = Date.now();
-        const cacheEntry: MetadataCache = {
-          data: entityData,
-          timestamp: now,
-          expiresAt: now + cacheTimeout,
-        };
-        metadataCache.set(cacheKey, cacheEntry);
-        logCacheOperation("STORE", cacheKey, entityData.name);
-
-        setMetadata(entityData);
         return entityData;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
@@ -463,7 +386,7 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
         setLoading(false);
       }
     },
-    [baseUrl, cacheTimeout, isCacheValid, logCacheOperation]
+    [baseUrl]
   );
 
   // Extract entity metadata from parsed OData metadata
@@ -491,7 +414,6 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
 
         props.forEach((prop: any) => {
           // Extract display attributes from OData annotations
-          // Try multiple annotation namespaces for better compatibility
           const displayName =
             prop["@_sap:label"] ||
             prop["@_sap:display-format"] ||
@@ -554,154 +476,29 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
     }
   }
 
-  // Clear error
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
-
-  // Utility functions for form generation
-  const getFieldType = useCallback((odataType: string, fieldName: string): string => {
-    // Check for specific field patterns first
-    const fieldNameLower = fieldName.toLowerCase();
-    if (fieldNameLower.includes("email") || fieldNameLower.includes("mail")) {
-      return "email";
-    }
-    if (fieldNameLower.includes("url") || fieldNameLower.includes("link") || fieldNameLower.includes("website")) {
-      return "url";
-    }
-    if (fieldNameLower.includes("phone") || fieldNameLower.includes("mobile") || fieldNameLower.includes("tel")) {
-      return "tel";
-    }
-    if (fieldNameLower.includes("password")) {
-      return "password";
-    }
-    if (
-      fieldNameLower.includes("description") ||
-      fieldNameLower.includes("notes") ||
-      fieldNameLower.includes("comment")
-    ) {
-      return "textarea";
-    }
-
-    // Then check OData types
-    switch (odataType) {
-      case "Edm.String":
-        return "text";
-      case "Edm.Int32":
-      case "Edm.Int64":
-        return "number";
-      case "Edm.Decimal":
-      case "Edm.Double":
-        return "number";
-      case "Edm.Boolean":
-        return "checkbox";
-      case "Edm.DateTime":
-      case "Edm.DateTimeOffset":
-        return "date";
-      default:
-        return "text";
-    }
-  }, []);
-
-  const getInitialValue = useCallback((odataType: string): any => {
-    switch (odataType) {
-      case "Edm.String":
-        return "";
-      case "Edm.Int32":
-      case "Edm.Int64":
-      case "Edm.Decimal":
-      case "Edm.Double":
-        return 0;
-      case "Edm.Boolean":
-        return false;
-      case "Edm.DateTime":
-      case "Edm.DateTimeOffset":
-        return "";
-      default:
-        return "";
-    }
-  }, []);
-
-  // Debounced initialization function
-  const debouncedInitializeMetadata = useCallback(async () => {
-    // Clear existing timer for this baseUrl
-    if (initMetadataTimers.has(baseUrl)) {
-      clearTimeout(initMetadataTimers.get(baseUrl)!);
-    }
-
-    // Return a promise that resolves when the debounced initialization completes
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(async () => {
-        try {
-          const response = await fetch(`${baseUrl}/odata/$metadata`);
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          const xmlText = await response.text();
-          const parser = new XMLParser({
-            ignoreAttributes: false,
-            attributeNamePrefix: "",
-          });
-          const parsedMetadata = parser.parse(xmlText);
-          console.log("Parsed metadata:", parsedMetadata);
-
-          // Log available entities
-          try {
-            const schemas = parsedMetadata["edmx:Edmx"]["edmx:DataServices"]["Schema"];
-            const schema = Array.isArray(schemas) ? schemas[0] : schemas;
-            if (schema.EntityType) {
-              const entityTypes = Array.isArray(schema.EntityType) ? schema.EntityType : [schema.EntityType];
-              console.log(
-                "Available entities:",
-                entityTypes.map((e: any) => e.Name)
-              );
-            }
-          } catch {
-            console.log("Could not extract entity names from metadata");
-          }
-
-          console.log(`Setting allMetadata for instance: ${instanceId}`);
-          // Store in shared state for all instances with this baseUrl
-          sharedMetadataState.set(baseUrl, parsedMetadata);
-          setAllMetadata(parsedMetadata);
-          resolve();
-        } catch (err) {
-          console.error("Error initializing metadata:", err);
-          reject(err);
-        } finally {
-          // Clean up the timer reference
-          initMetadataTimers.delete(baseUrl);
+  // Initialize metadata once
+  useEffect(() => {
+    const initializeMetadata = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/odata/$metadata`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
-      }, 300); // 300ms debounce delay
-
-      // Store the timer reference
-      initMetadataTimers.set(baseUrl, timer);
-    });
-  }, [baseUrl]);
-
-  // Initialize metadata once (like a constructor)
-  useEffect(() => {
-    debouncedInitializeMetadata().catch(console.error);
-  }, [debouncedInitializeMetadata]);
-
-  // Sync with shared metadata changes
-  useEffect(() => {
-    const checkSharedMetadata = () => {
-      const shared = sharedMetadataState.get(baseUrl);
-      if (shared && !allMetadata) {
-        console.log(`Syncing shared metadata for instance: ${instanceId}`);
-        setAllMetadata(shared);
+        const xmlText = await response.text();
+        const parser = new XMLParser({
+          ignoreAttributes: false,
+          attributeNamePrefix: "",
+        });
+        const parsedMetadata = parser.parse(xmlText);
+        console.log(`Setting allMetadata for instance: ${instanceId}`);
+        setAllMetadata(parsedMetadata);
+      } catch (err) {
+        console.error("Error initializing metadata:", err);
       }
     };
 
-    // Check immediately
-    checkSharedMetadata();
-
-    // Set up interval to check for shared metadata
-    const interval = setInterval(checkSharedMetadata, 100);
-
-    return () => clearInterval(interval);
-  }, [baseUrl, allMetadata, instanceId]);
+    initializeMetadata();
+  }, [baseUrl, instanceId]);
 
   const generateFormSchema = useCallback(
     (entityName: string) => {
@@ -725,8 +522,8 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
             );
           })
           .forEach((prop: any) => {
-            const fieldType = getFieldType(prop.type, prop.name);
-            initialValues[prop.name] = getInitialValue(prop.type);
+            const fieldType = getFieldType(prop);
+            initialValues[prop.name] = getInitialValue(prop);
 
             schema[prop.name] = {
               type: fieldType,
@@ -737,7 +534,6 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
                 required: !prop.nullable,
                 ...(prop.maxLength && { maxLength: prop.maxLength }),
                 ...(prop.type === "Edm.Decimal" || prop.type === "Edm.Double" ? { step: "0.01" } : {}),
-                // For date fields, ensure the NativeDateTimePicker gets the correct type
                 ...(fieldType === "date" && { type: "date" }),
               },
             };
@@ -749,8 +545,63 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
         return { schema: {}, initialValues: {} };
       }
     },
-    [allMetadata, getFieldType, getInitialValue]
+    [allMetadata]
   );
+
+  // Utility functions for form generation - based on OData metadata
+  const getFieldType = useCallback((property: PropertyMetadata): string => {
+    // Use OData type from metadata to determine field type
+    switch (property.type) {
+      case "Edm.String":
+        // Check if it's a long text field based on maxLength
+        if (property.maxLength && property.maxLength > 255) {
+          return "textarea";
+        }
+        return "text";
+      case "Edm.Int32":
+      case "Edm.Int64":
+        return "number";
+      case "Edm.Decimal":
+      case "Edm.Double":
+        return "number";
+      case "Edm.Boolean":
+        return "checkbox";
+      case "Edm.DateTime":
+      case "Edm.DateTimeOffset":
+        return "date";
+      case "Edm.Guid":
+        return "text"; // GUID as text input
+      case "Edm.Binary":
+        return "file"; // Binary data as file input
+      default:
+        // For complex types or navigation properties, default to text
+        return "text";
+    }
+  }, []);
+
+  const getInitialValue = useCallback((property: PropertyMetadata): any => {
+    switch (property.type) {
+      case "Edm.String":
+        return "";
+      case "Edm.Int32":
+      case "Edm.Int64":
+        return 0;
+      case "Edm.Decimal":
+      case "Edm.Double":
+        return 0;
+      case "Edm.Boolean":
+        return false;
+      case "Edm.DateTime":
+      case "Edm.DateTimeOffset":
+        return "";
+      case "Edm.Guid":
+        return "";
+      case "Edm.Binary":
+        return null;
+      default:
+        return "";
+    }
+  }, []);
 
   return {
     // CRUD operations
@@ -763,21 +614,13 @@ export function useODataCRUD<T = any>({ baseUrl, cacheTimeout = 5 * 60 * 1000, i
 
     // Metadata operations
     fetchMetadata,
-    metadata,
     allMetadata,
 
-    // Cache operations
-    clearCache,
-    clearAllCache,
-
     // Form utilities
-    getFieldType,
-    getInitialValue,
     generateFormSchema,
 
     // State
     loading,
     error,
-    clearError,
   };
 }
