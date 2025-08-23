@@ -2,95 +2,60 @@
 import { useState } from "react";
 import { useODataCRUD } from "./useODataCRUD";
 import { useForm } from "../Builder/core/useForm";
-import { NATIVE_INPUT_CONFIG, NativeSelect } from "../Builder/FormComponents";
+import { NATIVE_INPUT_CONFIG } from "../Builder/FormComponents";
 
 interface ODataCreateFormProps {
   baseUrl: string;
   entityName: string;
-  formId?: string; // Add unique identifier
-  onSuccess?: (createdEntity: any) => void;
-  onError?: (error: string) => void;
-  onCancel?: () => void;
 }
 
-export default function ODataCreateForm({
-  baseUrl,
-  entityName,
-  formId,
-  onSuccess,
-  onError,
-  onCancel,
-}: ODataCreateFormProps) {
-  console.log(`ODataCreateForm render for ${entityName} (${formId}) - baseUrl: ${baseUrl}`);
-
+export default function ODataCreateForm({ baseUrl, entityName }: ODataCreateFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Use the OData CRUD hook with entity name
-  const { create, formSchema, navigationOptions, loading, allMetadata } = useODataCRUD({
+  const { create, formSchema, loading, allMetadata } = useODataCRUD({
     baseUrl,
     entityName,
-    instanceId: formId,
   });
 
   console.log(
-    `ODataCreateForm ${entityName} (${formId}) - allMetadata:`,
+    `ODataCreateForm ${entityName} - allMetadata:`,
     !!allMetadata,
     "formSchema:",
     Object.keys(formSchema.schema)
   );
+  console.log("Form schema details:", formSchema.schema);
 
-  // Use form schema directly from hook
   const { schema, initialValues } = formSchema;
 
-  // Create custom input config that includes navigation property dropdowns
-  const customInputConfig = {
-    ...NATIVE_INPUT_CONFIG,
-    components: {
-      ...NATIVE_INPUT_CONFIG.components,
-      // Override select for navigation properties
-      select: (props: any) => {
-        // Check if this is a navigation property
-        if (props.navigationProperty) {
-          const fieldName = props.name;
-          const options = navigationOptions[fieldName] || [];
-
-          return (
-            <NativeSelect
-              {...props}
-              options={options}
-              // Remove navigationProperty from DOM props
-              navigationProperty={undefined}
-            />
-          );
-        }
-        // Use regular NativeSelect for non-navigation properties
-        return <NativeSelect {...props} />;
-      },
-    },
-  };
-
-  // Create form instance with custom config
-  const [formInstance] = useForm(initialValues, schema, customInputConfig);
+  // Create form instance with standard config
+  const [formInstance] = useForm(initialValues, schema, NATIVE_INPUT_CONFIG);
 
   // Handle form submission
   const handleSubmit = async () => {
     if (formInstance.validateFields()) {
       setIsSubmitting(true);
       try {
-        const createdEntity = await create(entityName, formInstance.values);
-        onSuccess?.(createdEntity);
+        const createdEntity = await create(formInstance.values);
+        console.log("Successfully created entity:", createdEntity);
+        alert(`Successfully created ${entityName}!`);
       } catch (error) {
+        console.log("Form submission error:", error);
+
         // Handle backend validation errors
         if (error && typeof error === "object" && "type" in error && error.type === "validation") {
           // Set field-specific validation errors from backend
           const validationErrors = (error as any).errors;
+          console.log("Setting validation errors:", validationErrors);
           Object.entries(validationErrors).forEach(([fieldName, errorMessage]) => {
+            console.log(`Setting error for field ${fieldName}:`, errorMessage);
             formInstance.setError(fieldName as any, errorMessage as string);
           });
         } else {
           // Handle other errors
           const errorMessage = error instanceof Error ? error.message : "Failed to create entity";
-          onError?.(errorMessage);
+          console.log("Non-validation error:", errorMessage);
+          alert(`Error: ${errorMessage}`);
         }
       } finally {
         setIsSubmitting(false);
@@ -100,7 +65,7 @@ export default function ODataCreateForm({
 
   // Loading state - show loading when metadata is not yet loaded
   if (loading || !allMetadata) {
-    console.log(`Form ${entityName} (${formId}) - Loading state: loading=${loading}, allMetadata=${!!allMetadata}`);
+    console.log(`Form ${entityName} - Loading state: loading=${loading}, allMetadata=${!!allMetadata}`);
     return <div>Loading form configuration for {entityName}...</div>;
   }
 
@@ -121,23 +86,6 @@ export default function ODataCreateForm({
         }}
       >
         <h2 style={{ marginBottom: "20px", color: "#333" }}>Create New {entityName}</h2>
-
-        {/* Debug: Show current form values */}
-        <div
-          style={{
-            marginBottom: "20px",
-            padding: "10px",
-            backgroundColor: "#f8f9fa",
-            border: "1px solid #dee2e6",
-            borderRadius: "4px",
-            fontSize: "12px",
-          }}
-        >
-          <strong>Debug - Current Values:</strong>
-          <pre>{JSON.stringify(formInstance.values, null, 2)}</pre>
-        </div>
-
-        {/* Form Fields */}
         <div>{formInstance.renderAll()}</div>
 
         {/* Action Buttons */}
@@ -149,23 +97,24 @@ export default function ODataCreateForm({
             justifyContent: "flex-end",
           }}
         >
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={isSubmitting}
-              style={{
-                padding: "10px 20px",
-                border: "1px solid #ddd",
-                borderRadius: "4px",
-                backgroundColor: "#f8f9fa",
-                cursor: "pointer",
-                fontSize: "14px",
-              }}
-            >
-              Cancel
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              console.log("Form cancelled");
+              alert("Form cancelled");
+            }}
+            disabled={isSubmitting}
+            style={{
+              padding: "10px 20px",
+              border: "1px solid #ddd",
+              borderRadius: "4px",
+              backgroundColor: "#f8f9fa",
+              cursor: "pointer",
+              fontSize: "14px",
+            }}
+          >
+            Cancel
+          </button>
 
           <button
             type="button"

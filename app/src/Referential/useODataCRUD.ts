@@ -5,7 +5,6 @@ import { XMLParser } from "fast-xml-parser";
 interface ODataCRUDConfig {
   baseUrl: string;
   entityName: string; // The entity this hook will work with
-  instanceId?: string; // Unique identifier for this hook instance
 }
 
 interface EntityMetadata {
@@ -44,8 +43,8 @@ interface ODataError {
   };
 }
 
-export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: ODataCRUDConfig) {
-  console.log(`useODataCRUD hook initialized for entity: ${entityName}, instance: ${instanceId}`);
+export function useODataCRUD<T = any>({ baseUrl, entityName }: ODataCRUDConfig) {
+  console.log(`useODataCRUD hook initialized for entity: ${entityName}`);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +56,7 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
 
   // GET all entities with optional OData query parameters
   const getAll = useCallback(
-    async (entityName: string, query?: string): Promise<T[]> => {
+    async (query?: string): Promise<T[]> => {
       setLoading(true);
       setError(null);
 
@@ -81,12 +80,12 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // GET single entity by ID
   const getById = useCallback(
-    async (entityName: string, id: number | string, expand?: string): Promise<T | null> => {
+    async (id: number | string, expand?: string): Promise<T | null> => {
       setLoading(true);
       setError(null);
 
@@ -116,12 +115,12 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // POST - Create new entity
   const create = useCallback(
-    async (entityName: string, entity: Partial<T>): Promise<T> => {
+    async (entity: Partial<T>): Promise<T> => {
       setLoading(true);
       setError(null);
 
@@ -136,6 +135,24 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
 
         if (!response.ok) {
           const errorData = await response.json();
+          console.log("Create error response:", errorData);
+
+          // Handle direct validation errors format: {"Name":["The Product Name field is required."]}
+          if (typeof errorData === "object" && !errorData.error) {
+            const validationErrors: Record<string, string> = {};
+            Object.entries(errorData).forEach(([fieldName, messages]) => {
+              if (Array.isArray(messages) && messages.length > 0) {
+                validationErrors[fieldName] = messages[0];
+              } else if (typeof messages === "string") {
+                validationErrors[fieldName] = messages;
+              }
+            });
+
+            if (Object.keys(validationErrors).length > 0) {
+              console.log("Create validation errors found:", validationErrors);
+              throw { type: "validation", errors: validationErrors };
+            }
+          }
 
           // Handle OData validation errors
           if (errorData.error?.details) {
@@ -185,12 +202,12 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // PUT - Update entity completely
   const update = useCallback(
-    async (entityName: string, id: number | string, entity: Partial<T>): Promise<T> => {
+    async (id: number | string, entity: Partial<T>): Promise<T> => {
       setLoading(true);
       setError(null);
 
@@ -205,6 +222,24 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
 
         if (!response.ok) {
           const errorData = await response.json();
+          console.log("Update error response:", errorData);
+
+          // Handle direct validation errors format: {"Name":["The Product Name field is required."]}
+          if (typeof errorData === "object" && !errorData.error) {
+            const validationErrors: Record<string, string> = {};
+            Object.entries(errorData).forEach(([fieldName, messages]) => {
+              if (Array.isArray(messages) && messages.length > 0) {
+                validationErrors[fieldName] = messages[0];
+              } else if (typeof messages === "string") {
+                validationErrors[fieldName] = messages;
+              }
+            });
+
+            if (Object.keys(validationErrors).length > 0) {
+              console.log("Update validation errors found:", validationErrors);
+              throw { type: "validation", errors: validationErrors };
+            }
+          }
 
           // Handle OData validation errors
           if (errorData.error?.details) {
@@ -254,12 +289,12 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // PATCH - Update entity partially
   const patch = useCallback(
-    async (entityName: string, id: number | string, entity: Partial<T>): Promise<T> => {
+    async (id: number | string, entity: Partial<T>): Promise<T> => {
       setLoading(true);
       setError(null);
 
@@ -274,6 +309,24 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
 
         if (!response.ok) {
           const errorData = await response.json();
+          console.log("Patch error response:", errorData);
+
+          // Handle direct validation errors format: {"Name":["The Product Name field is required."]}
+          if (typeof errorData === "object" && !errorData.error) {
+            const validationErrors: Record<string, string> = {};
+            Object.entries(errorData).forEach(([fieldName, messages]) => {
+              if (Array.isArray(messages) && messages.length > 0) {
+                validationErrors[fieldName] = messages[0];
+              } else if (typeof messages === "string") {
+                validationErrors[fieldName] = messages;
+              }
+            });
+
+            if (Object.keys(validationErrors).length > 0) {
+              console.log("Patch validation errors found:", validationErrors);
+              throw { type: "validation", errors: validationErrors };
+            }
+          }
 
           // Handle OData validation errors
           if (errorData.error?.details) {
@@ -323,12 +376,12 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // DELETE - Delete entity
   const remove = useCallback(
-    async (entityName: string, id: number | string): Promise<void> => {
+    async (id: number | string): Promise<void> => {
       setLoading(true);
       setError(null);
 
@@ -349,49 +402,7 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         setLoading(false);
       }
     },
-    [baseUrl]
-  );
-
-  // Fetch metadata for the entity
-  const fetchMetadata = useCallback(
-    async (entityName: string): Promise<EntityMetadata | null> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch(`${baseUrl}/odata/$metadata`);
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const xmlText = await response.text();
-
-        // Parse XML → JS object
-        const parser = new XMLParser({
-          ignoreAttributes: false,
-          attributeNamePrefix: "",
-        });
-
-        const parsedMetadata = parser.parse(xmlText);
-
-        // Extract entity metadata
-        const entityData = extractEntityMetadata(parsedMetadata, entityName);
-
-        if (!entityData) {
-          throw new Error(`Entity '${entityName}' not found in metadata`);
-        }
-
-        return entityData;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
-        setError(errorMessage);
-        throw err;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [baseUrl]
+    [baseUrl, entityName]
   );
 
   // Extract entity metadata from parsed OData metadata
@@ -497,7 +508,7 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
         });
         const parsedMetadata = parser.parse(xmlText);
         console.log(parsedMetadata);
-        console.log(`Setting allMetadata for entity: ${entityName}, instance: ${instanceId}`);
+        console.log(`Setting allMetadata for entity: ${entityName}`);
         setAllMetadata(parsedMetadata);
 
         // Generate form schema
@@ -536,8 +547,10 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
               };
             });
 
-          // Handle navigation properties
+          // Handle navigation properties - load all options first
           if (entityMetadata.navigationProperties) {
+            const navigationPromises: Promise<void>[] = [];
+
             for (const navProp of entityMetadata.navigationProperties) {
               if (!navProp.isCollection) {
                 // Use the navigation property name directly for the API call
@@ -559,46 +572,52 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
                       placeholder: `Choose ${targetEntityName}`,
                       required: !navProp.nullable,
                       options: [], // Will be populated below
-                      navigationProperty: {
-                        targetEntity: targetEntityName,
-                        isCollection: navProp.isCollection,
-                        originalName: navProp.name, // Keep original name for reference
-                      },
                     },
                   };
 
-                  // Fetch navigation options using the navigation property name
-                  try {
-                    const navResponse = await fetch(`${baseUrl}/odata/${targetEntityName}`);
-                    if (navResponse.ok) {
-                      const navData = await navResponse.json();
-                      const entities = navData.value || navData || [];
-                      const options = entities.map((entity: any) => ({
-                        value: entity.Id || entity.id || entity.ID,
-                        label:
-                          entity.Name ||
-                          entity.name ||
-                          entity.Title ||
-                          entity.title ||
-                          `ID: ${entity.Id || entity.id || entity.ID}`,
-                      }));
-                      navOptions[foreignKeyField] = options;
-                      console.log(`Loaded ${options.length} options for ${navProp.name} (${foreignKeyField})`);
+                  // Create a promise for loading navigation options
+                  const loadNavigationOptions = async () => {
+                    try {
+                      const navResponse = await fetch(`${baseUrl}/odata/${targetEntityName}`);
+                      if (navResponse.ok) {
+                        const navData = await navResponse.json();
+                        const entities = navData.value || navData || [];
+                        const options = entities.map((entity: any) => ({
+                          value: entity.Id || entity.id || entity.ID,
+                          label:
+                            entity.Name ||
+                            entity.name ||
+                            entity.Title ||
+                            entity.title ||
+                            `ID: ${entity.Id || entity.id || entity.ID}`,
+                        }));
+                        navOptions[foreignKeyField] = options;
+                        // Update the schema with the options
+                        schema[foreignKeyField].props.options = options;
+                        console.log(`Loaded ${options.length} options for ${navProp.name} (${foreignKeyField})`);
+                      }
+                    } catch (navErr) {
+                      console.error(`Error loading navigation options for ${navProp.name}:`, navErr);
+                      navOptions[foreignKeyField] = [];
                     }
-                  } catch (navErr) {
-                    console.error(`Error loading navigation options for ${navProp.name}:`, navErr);
-                    navOptions[foreignKeyField] = [];
-                  }
+                  };
+
+                  navigationPromises.push(loadNavigationOptions());
                 } else {
                   console.warn(`No foreign key field found for navigation property ${navProp.name}`);
                 }
               }
             }
+
+            // Wait for all navigation options to be loaded
+            await Promise.all(navigationPromises);
           }
 
+          // Set form schema after all navigation options are loaded
           setFormSchema({ schema, initialValues });
           setNavigationOptions(navOptions);
           console.log(`Form schema generated for ${entityName}:`, Object.keys(schema));
+          console.log(`Navigation options:`, navOptions);
         }
       } catch (err) {
         console.error("Error initializing form:", err);
@@ -606,18 +625,7 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
     };
 
     initializeForm();
-  }, [baseUrl, entityName, instanceId]);
-
-  // Update navigation options for a specific field
-  const updateNavigationOptions = useCallback(
-    (fieldName: string, options: Array<{ value: string | number; label: string }>) => {
-      setNavigationOptions((prev) => ({
-        ...prev,
-        [fieldName]: options,
-      }));
-    },
-    []
-  );
+  }, [baseUrl, entityName]);
 
   // Utility functions for form generation - based on OData metadata
   const getFieldType = useCallback((property: PropertyMetadata): string => {
@@ -684,13 +692,11 @@ export function useODataCRUD<T = any>({ baseUrl, entityName, instanceId }: OData
     remove,
 
     // Metadata operations
-    fetchMetadata,
     allMetadata,
 
     // Form utilities
     formSchema,
     navigationOptions,
-    updateNavigationOptions,
 
     // State
     loading,
